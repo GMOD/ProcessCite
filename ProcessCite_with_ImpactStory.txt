@@ -8,6 +8,15 @@ This distribution contains altered versions of two of the original ProcessCite f
 
 - Adds ImpactStory data to references with PubMed IDs.
 
+
+The following lines have been added to the wiki's Common.css (accessible at <wiki-url>/MediaWiki:Common.css) for display purposes:
+
+.impactstory-embed { float: right; margin-left: 1em; }
+.impactstory-embed ul { list-style-image: none; }
+.references>li { clear: right; padding: .5em 0; border-top: 1px solid #ccc }
+
+
 For a demonstration of the functioning of this extension, please see the GMOD wiki Publications page: http://gmod.org/wiki/Publications
+
 
 More comprehensive documentation will follow soon. Please address any questions to Amelia Ireland, amelia.ireland@gmod.org.

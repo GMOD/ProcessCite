@@ -257,7 +257,7 @@ function formatRefs( $paper_data, $type ){
 		);
 
 		# set up an object with this data in it
-		$string .= "{{$wgPCUseTemplate\n".$smw_str."}}";
+		$string .= "{{".$wgPCUseTemplate."\n".$smw_str."}}";
 	} else {
 		// Just output a string that will be displayed directly on the wiki.
 		switch(count($paper_data['Authors'])){

@@ -1,4 +1,99 @@
 ProcessCite
 ===========
 
-A semantic, impact-storified version of the ProcessCite mediawiki extension.
+This extension is a fork of the [ProcessCite](http://www.mediawiki.org/wiki/Extension:ProcessCite) extension. Please read README.txt first for an introduction to ProcessCite and the E. coli wiki reference handling system.
+
+This fork of ProcessCite adds several features:
+
+- citation metadata can be retrieved for digital object identifiers (DOIs);
+- COinS (Context Objects in Spans) metadata is added to PubMed and DOI references, allowing scrapers such as the Mendeley reference importer to get publication data from the page;
+- [ImpactStory](http://impactstory.org) altmetrics can be added to references;
+- citations can easily be formatted using a template in your wiki, making it extremely handy for encoding semantic data;
+- by default, citations are formatted according to the [proposed citation microformat](http://microformats.org/wiki/citation).
+
+
+Installation
+============
+
+This extension requires that [the Cite extension](http://mediawiki.org/wiki/Extension:Cite) be activated. This extension is included with recent releases of Mediawiki but may not be active. Older releases (1.19 and earlier?) do not have it included so it should be installed.
+
+This extension requires that curl be available on the server.
+
+Add the following line to `LocalSettings.php`:
+
+	 // Cite extension
+	 require_once( "$IP/extensions/Cite/Cite.php" );
+	 // ProcessCite
+	 require_once( "$IP/extensions/Cite/ProcessCite.php" );
+	 // PMID for EUtils
+	 require_once( "$IP/extensions/PMID/PMID.php");
+
+Add the files in the Cite folder to `extensions/Cite/`, and copy the `PMID` folder into the `extensions` directory.
+
+Find the following section in `Cite_body.php` (in the directory `extensions/Cite`):
+
+	function stack( $str, $key = null, $group, $follow, $call ) {
+		if ( !isset( $this->mRefs[$group] ) ) {
+			$this->mRefs[$group] = array();
+		}
+
+Insert the following text after the line starting `function stack( ...` to allow ProcessCite to work its magic:
+
+	wfRunHooks( 'CiteBeforeStackEntry', array( &$key, &$str, &$call ) );
+
+You may want to add a comment (a line starting with `//`) to indicate your edit.
+
+Your code should look like this:
+
+	function stack( $str, $key = null, $group, $follow, $call ) {
+		// Register hook for ProcessCite
+		wfRunHooks( 'CiteBeforeStackEntry', array( &$key, &$str, &$call ) );
+		if ( !isset( $this->mRefs[$group] ) ) {
+			$this->mRefs[$group] = array();
+		}
+
+Please note that if you have previously installed ProcessCite, you will need to edit the existing line in your patched version of `Cite_body.php`. Note also that you will need to edit `Cite_body.php` again if you update the Cite extension.
+
+
+Configuration
+=============
+
+Please see the documentation for ProcessCite for the details of that extension. This extension has the following additional options.
+
+If you want to include ImpactStory altmetrics, you will need to get an ImpactStory API key; see the [ImpactStory API docs](http://impactstory.org/api-docs) for details. Add the following line to your `LocalSettings.php` file to enable ImpactStory altmetrics:
+
+	$wgPCImpactStoryApiKey = "your-key-here";
+
+The following lines have been added to the wiki's Common.css (accessible at <wiki-url>/MediaWiki:Common.css) for display purposes:
+
+	.impactstory-embed { float: right; margin-left: 1em; }
+	.impactstory-embed ul { list-style-image: none; }
+	.references>li { clear: right; padding: .5em 0; }
+
+By default, the extension will output formatted text in the References section of the page. If you want to control the formatting of the text, what is or is not shown, or use the output from the extension to add semantic data to the page, add the following line:
+
+	$wgPCUseTemplate = "template-name";
+
+Citation data is returned in the following format:
+
+	{{template-name
+	|Author=        // colon-separated list of authors
+	|Title=
+	|JournalAbbrev= // abbreviated version of the journal name
+	|JournalFullName=
+	|Year=
+	|Volume=
+	|Issue=
+	|Pages=
+	|PMID=          // PubMed ID
+	|PMID COinS=    // string encoding the COinS data for the PMID
+	|DOI=
+	|DOI COinS=     // string encoding COinS data for the DOI
+	|PMCID=         // PubMedCentral ID
+	}}
+
+You can then use Template:template-name to format the data, including or omitting data as you see fit. The template can also be used to set semantic properties.
+
+For a demonstration of the functioning of this extension, please see the [GMOD wiki Publications page](http://gmod.org/wiki/Publications).
+
+Please address any questions to Amelia Ireland, amelia.ireland@gmod.org.

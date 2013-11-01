@@ -21,11 +21,11 @@ class PMIDeFetch{
 		# try to get from cache
 		try{
 			$pmidXML = $this->get_from_cache($pmid); #die(var_dump($pmidXML));
-			if ($pmidXML != false) $this->pmidObj = new SimpleXMLElement($pmidXML);	
+			if ($pmidXML != false) $this->pmidObj = new SimpleXMLElement($pmidXML);
 		} catch (Exception $e){
 			#$this->error_msg = "failed to valid xml from cache $e";
 			$pmidXML = false;
-		}		
+		}
 		# if it's not in the cache, or if it's just a docsum, fetch it from NCBI
 		if(!$pmidXML || !is_object($this->pmidObj->DocSum)){
 			$pmidXML = $this->get_from_eutils($pmid);
@@ -38,7 +38,7 @@ class PMIDeFetch{
 			exit;
 		}
 	}
-	
+
 	function get_from_eutils($pmid){
 		$email = 'ecoliwiki@gmail.com';
 		$tool = 'MediaWiki_ProcessCite_extension';
@@ -68,9 +68,9 @@ class PMIDeFetch{
 		}else{
 			$this->error_msg = "could not retrieve XML for PMID:$pmid from NCBI\n";
 			return false;
-		}	
+		}
 	}
-	
+
 	function article(){
 		if(!is_object($this->pmidObj->PubmedArticle->MedlineCitation)) return false;
 		return $this->pmidObj->PubmedArticle->MedlineCitation->Article;
@@ -92,13 +92,15 @@ class PMIDeFetch{
 				if($LastName != "") $cite_name = "$LastName $Initials";
 				if($Suffix != "") $cite_name .= " $Suffix";
 				if($CollectiveName != "") $cite_name = "$CollectiveName";
-				
-				$authors[] = array(
+
+/*				$authors[] = array(
 					'Last' => $LastName,
 					'Initials' => $Initials,
 					'CollectiveName' => $CollectiveName,
 					'Cite_name' => $cite_name
 				);
+*/
+				$authors[] = $cite_name;
 			}
 		}
 		return $authors;
@@ -124,6 +126,10 @@ class PMIDeFetch{
 		return (string)$this->article()->Journal->JournalIssue->Volume;
 	}
 
+	function issue(){
+		return (string)$this->article()->Journal->JournalIssue->Issue;
+	}
+
 	function pages(){
 		return (string)$this->article()->Pagination->MedlinePgn;
 	}
@@ -138,41 +144,11 @@ class PMIDeFetch{
 	function abstract_text(){
 		return (string)$this->article()->Abstract->AbstractText;
 	}
-	
+
 	function pubmed_data(){
 		return $this->pmidObj->PubmedArticle->PubmedData;
 	}
-	
-	function doi(){
-		if (!is_object($this->pmidObj)) return false;
-		if(is_object ($this->pubmed_data())){
-			$xrefs = $this->pubmed_data()->ArticleIdList;
-			foreach ($xrefs->ArticleId as $xref){
-				if(isset($xref['IdType']))
-				{	if ($xref['IdType'] == 'doi')
-					{	return (string)$xref;
-					}
-				}
-			}
-		}
-		return false;
-	}
 
-	function pmc(){
-		if (!is_object($this->pmidObj)) return false;
-		if(is_object ($this->pubmed_data())){
-			$xrefs = $this->pubmed_data()->ArticleIdList;
-			foreach ($xrefs->ArticleId as $xref){
-				if(isset($xref['IdType']))
-				{	if ($xref['IdType'] == 'pmc')
-					{	return (string)$xref;
-					}
-				}
-			}
-		}
-		return false;
-	}
-	
 	function xrefs(){
 		if (!is_object($this->pmidObj)) return false;
 		$arr = array();
@@ -184,7 +160,7 @@ class PMIDeFetch{
 		}
 		return $arr;
 	}
-	
+
 	function mesh(){
 		$arr = array();
 		if (is_object($this->pmidObj->PubmedArticle->MedlineCitation->MeshHeadingList)){
@@ -207,14 +183,15 @@ class PMIDeFetch{
 		}
 		return $arr;
 	}
-	
+
 	function citation(){
 		$authorlist = array();
 		foreach($this->authors() as $auth){
 			$authorlist[] = $auth['Cite_name'];
 		}
 		return array(
-			'Authors' 	=> implode(',', $authorlist),
+//			'Authors' 	=> implode(',', $authorlist),
+			'Authors'	=> $this->authors(),
 			'Year'   	=> $this->year(),
 			'Title'    	=> $this->title(),
 			'JournalAbbrev'   => $this->journal(),
@@ -223,11 +200,11 @@ class PMIDeFetch{
 			'Pages'   	=> $this->pages(),
 			'Abstract' 	=> $this->abstract_text(),
 			'xrefs' 	=> $this->xrefs(),
-			'doi'       => $this->doi(),
-			'pmc'       => $this->pmc(),
+//			'doi'       => $this->doi(),
+//			'pmc'       => $this->pmc(),
 		);
 	}
-	
+
 	function dump(){
 		print_r($this->pmidObj);
 	}
@@ -246,11 +223,11 @@ class PMIDeFetch{
 		$file = self::set_cache_path($pmid);
 		#echo "$file\n\n";
 		file_put_contents($file, $xml);
-		return true;	
+		return true;
 	}
-	
+
 	/*
-	Creates subdirectories as needed to split the saved PMID XML files into groups based on the first 4 digits of the ID. 
+	Creates subdirectories as needed to split the saved PMID XML files into groups based on the first 4 digits of the ID.
 	*/
 	function set_cache_path($pmid){
 		global $extEfetchCache;

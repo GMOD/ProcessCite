@@ -50,27 +50,31 @@ if ( ! defined( 'MEDIAWIKI' ) ) die();
 # Credits
 $wgExtensionCredits['other'][] = array(
     'name'=>'ProcessCite',
-    'author'=>'Jim Hu &lt;jimhu@tamu.edu&gt;',
-    'description'=>'Generates reference text for papers in National Library of Medicine PubMed database.',
-    'version'=>'0.2'
+    'author'=>'Jim Hu &lt;jimhu@tamu.edu&gt; with additional modifications by Amelia Ireland',
+    'description'=>'Generates reference text for papers in National Library of Medicine PubMed database and for objects with Digital Object Identifiers (DOIs).',
+    'version'=>'0.3'
 );
 
 # Register hooks ('CiteBeforeStackEntry' hook is provided by a patch to the Cite extension).
 # If hook not present in Cite, add it at the start of function stack
-
 $wgHooks['CiteBeforeStackEntry'][] = 'wfProcessCite';
-//require_once('/Volumes/SAS/local/wiki-extensions/trunk/PMID/class.PMIDeFetch.php');
 
+# Add the js to the page
 $wgHooks['BeforePageDisplay'][] = 'pcBeforePageDisplay';
 
 global $wgExtensionPath;
 $wgAutoloadClasses['PMIDeFetch'] =  "$wgExtensionPath/PMID/class.PMIDeFetch.php";
+
+require_once(  dirname( __FILE__ ) . "/CrossRef.php");
+//load internationalization file
+$wgExtensionMessagesFiles['CiteByDOI'] = dirname( __FILE__ ) ."/CiteByDOI.i18n.php";
 
 $wgResourceModules['ext.ProcessCite'] = array(
 'scripts' => 'ext.ProcessCite.js',
 'localBasePath' => dirname( __FILE__ ),
 'remoteExtPath' => 'Cite'
 );
+
 
 
   /**
@@ -81,19 +85,24 @@ $wgResourceModules['ext.ProcessCite'] = array(
     * @param $out OutputPage output page
     * @param $skin Skin current skin
     */
+
+
 function pcBeforePageDisplay( &$out, &$skin ) {
 // public static function pcBeforePageDisplay( OutputPage &$out, Skin &$skin ) {
 	$out->addModules( 'ext.ProcessCite' );
 	return true;
 }
 
+
 /**
 * params from cite: key is the name from <ref name =key>sometext</ref> or <ref name=key/>
 * val is an associative array with keys text, count, and number.
 */
 
-function wfProcessCite( $key, $str ){
+function wfProcessCite( $key, $str, $argv ){
 	global $wgHooks, $wgSitename;
+
+//	MWDebug::log("Starting wfProcessCite; args: key $key, str $str, argv: $argv ");
 
 	# Configuration section
 
@@ -101,152 +110,243 @@ function wfProcessCite( $key, $str ){
 	$lib_pageName = "$wgSitename Reference Library"; # the PAGENAME of the page where the commonly used references are stored
 	require "GO.xrf_abbs.php"; # load the dbxref url file
 
-
-	#get the text enclosed in <ref> tags if present
-	$my_text = $str;
-
 	# get the key;xrefs list
-	if (isset($key) && !is_int($key)){
-		$tmp_key = $key;
+//	if (isset($key) && !is_int($key)){
+//		$tmp_key = $key;
+	// $key gets mangled by Cite, so use the 'name' attribute directly
+	if (isset($argv['name'])) {
+		$tmp_key = (string)$argv['name'];
 	}else{
-		$tmp_key = $my_text; #to handle situation where user puts the info inside <ref> instead of in <ref name =key>
+		$tmp_key = $str; #to handle situation where user puts the info inside <ref> instead of in <ref name =key>
 	}
-	$xrefs = explode('.3B',$tmp_key); #Cite changes the encoding of the semicolon
 
+	$string = ''; // this will replace <ref .../>
+//	foreach ($tmp_key as $my_key){
 
-	$string = $my_text;
-	$link ='';
-	$is='';
-	foreach ($xrefs as $my_key){
+	$ref_fields = explode(':',$tmp_key);
 
-		$ref_fields = explode(':',$my_key);
+	#these lines trim the extra _ when the user puts a space after colon in REFTYPE:data, then restore internal _
+	$data = trim(str_replace('_',' ', array_pop($ref_fields)));	# assume the last element is the identifier data
+	$data = str_replace(' ','_',$data);
+	$ref_type = implode(':',$ref_fields); 	# reassemble the front part
+	MWDebug::log("ref fields: $ref_fields; ref type: $ref_type; data: $data");
 
-		#these lines trim the extra _ when the user puts a space after colon in REFTYPE:data, then restore internal _
-		$data = trim(str_replace('_',' ', array_pop($ref_fields)));	# assume the last element is the identifier data
-		$data = str_replace(' ','_',$data);
-		$ref_type = implode(':',$ref_fields); 	# reassemble the front part
+	switch ($ref_type){
+		case 'DOI':
+			// Fetch the paper data from the CrossRef server
+			$paper_data = CrossRef::doiToMeta($data);
 
+//			$v = var_export($paper_data, true);
+//			MWDebug::log("results: $v");
 
-		switch ($ref_type){
-			case 'PMID':
-				$paper = new PMIDeFetch($data);
-				$ref_fields = $paper->citation();
+			//check for errors
+			if(isset($paper_data['error']))
+			{
+				$string = $ref_type . ":" . $data . ': <span class="error">' . wfMsg('doi_not_resolved') . "</span>";
+				MWDebug::log("error in resolving DOI $data!");
+			} else {
 
-				$string = '';
-				$smw_str = "Publication\n";
-				$set_smw = '{{#set:';
+				// reformat date to match the PMID date
 
-				$date = $ref_fields['Year'];
-				$title = $ref_fields['Title'];
-				$jrnl = $ref_fields['JournalAbbrev'];
-				$journal = $ref_fields['JournalFullName'];
-				$volume = $ref_fields['Volume'];
-				$pages = $ref_fields['Pages'];
-
-				$jrnl_str = "";
-
-				## see if the full journal name and the abbreviated name are the same.
-				if ($jrnl != $journal)
-				{	$jrnl_str = "<abbr class='journal' title='" . $journal . "'>$jrnl</abbr>";
-				}
-				else
-				{	$jrnl_str = "<span class='journal'>$jrnl</span>";
+				// find the publication date.
+				// Use the year of print publication
+				// If no print date, use online publication date
+				if (isset($paper_data['Pub_date']['print'])) {
+					$paper_data['Year'] = $paper_data['Pub_date']['print']['year'];
+				} elseif (isset($paper_data['Pub_date']['online'])) {
+					$paper_data['Year'] = $paper_data['Pub_date']['online']['year'];
+				} else {
+					$paper_data['Year'] = '';
 				}
 
-				$author = array();
-				foreach($paper->authors() as $auth){
-					$author[] = $auth['Cite_name'];
+				$string = formatRefs($paper_data, 'DOI');
+			}
+			break;
+
+		case 'PMID':
+			MWDebug::log("found a PMID ref: $data");
+
+			$paper = new PMIDeFetch($data);
+			$paper_data = $paper->citation();
+			// coerce data into the same format as the DOI data
+			if(isset($paper_data['xrefs']['doi']))
+			{	$paper_data['DOI'] = $paper_data['xrefs']['doi'];
+			}
+			if (isset($paper_data['xrefs']['pmc']))
+			{	$paper_data['PMCID'] = $paper_data['xrefs']['pmc'];
+			}
+			if (isset($paper_data['xrefs']['pubmed']))
+			{	$paper_data['PMID'] = $paper_data['xrefs']['pubmed'];
+			}
+			$string = formatRefs($paper_data, 'PMID');
+			break;
+		case 'ISBN':
+
+
+
+			break;
+
+		# look in a library of reference information on a specific pagename
+		case "$libtag":
+
+			# load the data library
+			$item = array();
+			$data_page = Revision::newFromTitle(Title::makeTitle(NS_MAIN, $lib_pageName));
+			if (! $data_page){
+			#	echo "Library not found\n"; break;
+			}else{
+				$text = $data_page->getText();
+				$text = preg_replace( '/<noinclude>.*?<\/noinclude>/s', '', $text );
+				$records = explode("\n",$text);
+				foreach($records as $record){
+					$tmp = explode('|',$record);
+					# rejoin just in case the text has another |, which will happen with redirected wiki links
+					$item[$tmp[0]] = implode('|',array_slice($tmp, 1));
 				}
 
-				$smw_str .= '|author=' . join(":", $author);
-				$set_smw .= '|Has author='. join("|Has author=", $author);
-				switch(count($author)){
-					case 0:
-						break;
-					case 1:
-						$string .= "<span class='author'>$author[0]</span>.";
-						break;
-					case 2:
-						$string .= "<span class='author'>" . $author[0] . "</span> and <span class='author'>". $author[1] . "</span>.";
-						break;
-					case 3: ## this is in line with Nature's guidelines
-					case 4: ## more than five authors ==> use "et al."
-					case 5:
-						$last = array_pop($author);
-						$string .= "<span class='author'>" . join("</span>, <span class='author'>", $author) . "</span>, and <span class='author'>$last</span>.";
-						break;
-					default:
-						$string .= "<span class='author'>$author[0]</span> <i>et al</i>.";
-				}
+			}
 
-				$string .= " <span class='title'>$title</span> <span class='container hcite'>$jrnl_str <span class='pubdate'>$date</span> <span class='volume'>$volume</span>:<span class='page'>$pages</span></span>.<br>";
-				# set up a subobject with this data in it
-				$smw_str .= "|title=$title|journal=$jrnl_str|pubdate=$date|vol=$volume|page=$pages";
+			@$string = $item[$data];
 
-				if($ref_fields['doi'])
-				{	$string .= " [http://dx.doi.org/" . $ref_fields['doi'] . " DOI:" . $ref_fields['doi'] . "] ";
-					$smw_str .= '|doi:' . $ref_fields['doi'];
-					$set_smw .= "|Has DOI=" . $ref_fields['doi'];
-				}
-
-
-				if ($ref_fields['pmc'])
-				{	$string .= " [http://www.ncbi.nlm.nih.gov/pmc/articles/" . $ref_fields['pmc'] . "/ PMCID:" . $ref_fields['pmc'] . "] ";
-					$smw_str .= '|pmcid:' . $ref_fields['pmc'];
-					$set_smw .= '|Has PubMed Central ID=' . $ref_fields['pmc'];
-				}
-
-				$link = " [http://www.ncbi.nlm.nih.gov/entrez/query.fcgi?cmd=Retrieve&db=pubmed&dopt=Abstract&list_uids=$data <span class='Z3988' title='ctx_ver=Z39.88-2004&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Ajournal&amp;rfr_id=info%3Asid%2Focoins.info%3Agenerator&amp;rft.genre=article&amp;rft_id=info%3Apmid%2F$data'>PMID:$data</span>]";
-				$smw_str .= "|pmid:$data";
-				$set_smw .= "|Has title=$title|Published in=$jrnl_str|Publication date=$date|"
-			//	. "Publication volume=$volume|Publication pages=$pages|"
-				."PubMed ID=$data}}";
-				# prepend the ImpactStory stuff
-				$is = "<div class='impactstory-embed' data-show-logo='false' data-id='". $data ."' data-id-type='pmid' data-badge-type='icon' data-api-key='gmod-th0dfd'><i class='loading'></i></div>";
-				# add internal link if PagesOnDemand is present.
-#				if (isset($wgHooks['PagesOnDemand']) && in_array('wfLoadPubmedPageOnDemand',$wgHooks['PagesOnDemand'])) $link .= " [[$key|$wgSitename page]]";
-
-
-				break;
-			case 'ISBN':
-				break;
-
-			# look in a library of reference information on a specific pagename
-			case "$libtag":
-
-				# load the data library
-				$item = array();
-				$data_page = Revision::newFromTitle(Title::makeTitle(NS_MAIN, $lib_pageName));
-				if (! $data_page){
-				#	echo "Library not found\n"; break;
-				}else{
-					$text = $data_page->getText();
-					$text = preg_replace( '/<noinclude>.*?<\/noinclude>/s', '', $text );
-					$records = explode("\n",$text);
-					foreach($records as $record){
-						$tmp = explode('|',$record);
-						# rejoin just in case the text has another |, which will happen with redirected wiki links
-						$item[$tmp[0]] = implode('|',array_slice($tmp, 1));
-					}
-
-				}
-
-				@$string = $item[$data];
-
-				break;
-			default:
-				if (isset ($dbxref_url[$ref_type])){
-					$link .= " [".$dbxref_url[$ref_type]."$data $my_key] ";
-				}
-			} # end switch ref_type
-		}
-
-	$string .= " $link ";
-
-	$my_text = "$is<cite class='hcite'>$string</cite>$set_smw"; //<br><br>{{" . $smw_str . '}}' ;
+			break;
+		default:
+			if (isset ($dbxref_url[$ref_type])){
+				$link .= " [".$dbxref_url[$ref_type]."$data $tmp_key] ";
+			}
+		} # end switch ref_type
+//		}
 
 	#Replace the reference text
-	$str = $my_text;
+	$str = $string;
 
 	return true;
 }
+
+/*
+
+function formatRefs
+
+Mangles the article data into a format for displaying on a wiki.
+
+@param $paper_data  // contains the data about the article
+@param $type // 'PMID' or 'DOI'
+*/
+
+function formatRefs( $paper_data, $type ){
+
+	$string = ''; //this will get returned to the wiki.
+
+	global $wgPCImpactStoryApiKey; ## MUST have an ImpactStory API key to include IS alt-metrics
+	global $wgPCUseTemplate; ## Name of template (if using)
+
+
+	if (isset($wgPCUseTemplate) && $wgPCUseTemplate){
+		// set up the semantic stuff
+		$smw_str = '|Author=' . join(":", $paper_data['Authors']);
+
+		$attribs = array( 'Title', 'JournalFullName', 'JournalAbbrev', 'Volume', 'Issue', 'Pages', 'Year', 'DOI', 'PMID', 'PMCID');
+		foreach ($attribs as $a) {
+			( isset($paper_data[$a])
+			? $smw_str .= "|$a=" . $paper_data[$a]
+			: '' );
+		}
+		// add the COinS info in case of template calamities
+		($type == 'PMID'
+		? $smw_str .= "|PMID COinS=<span class='Z3988' title='ctx_ver=Z39.88-2004&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Ajournal&amp;rfr_id=info%3Asid%2Focoins.info%3Agenerator&amp;rft.genre=article&amp;rft_id=info%3Apmid%2F" . $paper_data['PMID'] . "'>PMID:" . $paper_data['PMID'] . "</span>"
+		: $smw_str .= "|DOI COinS=<span class='Z3988' title='ctx_ver=Z39.88-2004&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Ajournal&amp;rfr_id=info%3Asid%2Focoins.info%3Agenerator&amp;rft.genre=article&amp;rft_id=info%3Adoi%2F" . $paper_data['DOI'] . "'>DOI:" . $paper_data['DOI'] . "</span>"
+		);
+
+		# set up an object with this data in it
+		$string .= "{{" . "#subobject:" #. $wgPCUseTemplate\n"
+		. "\n". $smw_str . "}}";
+	} else {
+		// Just output a string that will be displayed directly on the wiki.
+		switch(count($paper_data['Authors'])){
+		case 0:
+				break;
+			case 1:
+				$string = "<span class='author'>".$paper_data['Authors'][0]."</span>.";
+				break;
+			case 2:
+				$string = "<span class='author'>" . $paper_data['Authors'][0] . "</span> and <span class='author'>". $paper_data['Authors'][1] . "</span>.";
+				break;
+			case 3: ## this is in line with Nature's guidelines
+			case 4: ## more than five authors ==> use "et al."
+			case 5:
+				$last = array_pop($paper_data['Authors']);
+				$string = "<span class='author'>" . join("</span>, <span class='author'>", $paper_data['Authors']) . "</span>, and <span class='author'>$last</span>.";
+				$paper_data['Authors'][] = $last;
+				break;
+			default:
+				$string = "<span class='author'>".$paper_data['Authors'][0]."</span> <i>et al</i>.";
+		}
+
+
+		## see if the full journal name and the abbreviated name are the same.
+		if (isset($paper_data['JournalAbbrev']) && $paper_data['JournalAbbrev'] !== $paper_data['JournalFullName'])
+		{	$paper_data['jrnl_str'] = "<abbr class='journal' title='" . $paper_data['JournalFullName'] . "'>" . $paper_data['JournalAbbrev'] . "</abbr>";
+		}
+		else
+		{	$paper_data['jrnl_str'] = "<span class='journal'>" . $paper_data['JournalFullName'] . "</span>";
+		}
+
+
+		// put together the citation string
+		$string .= " <span class='title'>" . $paper_data['Title'] . "</span> <span class='container hcite'>" . $paper_data['jrnl_str']
+		. ( isset($paper_data['Year']) ? " <span class='pubdate' title='Publication date'>" . $paper_data['Year'] . "</span>" : "")
+		. ( isset($paper_data['Volume']) ? " <span class='volume' title='Volume'>" . $paper_data['Volume'] . "</span>": '')
+
+		. ( isset($paper_data['Issue']) ? ":<span class='issue' title='Issue'>" . $paper_data['Issue'] . "</span>": '')
+
+		. ( isset($paper_data['Pages']) ? " <span class='page' title='Pages'>" . $paper_data['Pages'] . "</span>": '')
+
+		."</span>.<br>"
+
+		// add the DOI
+		. ( isset($paper_data['DOI']) ?
+		// does this come from a DOI listing?
+			" [http://dx.doi.org/" . $paper_data['DOI'] .
+			( $type == 'DOI' ?
+			" <span class='Z3988' title='ctx_ver=Z39.88-2004&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Ajournal&amp;rfr_id=info%3Asid%2Focoins.info%3Agenerator&amp;rft.genre=article&amp;rft_id=info%3Adoi%2F"
+			. rawurlencode($paper_data['DOI'])
+			. "'>DOI:" . $paper_data['DOI'] . "</span>]"
+			: " DOI:" . $paper_data['DOI']. "]"
+			)
+			: ""
+		)
+		// PubMedCentral
+		. ( isset($paper_data['PMCID']) ?
+			" [http://www.ncbi.nlm.nih.gov/pmc/articles/" . $paper_data['PMCID'] . "/ PMCID:" . $paper_data['PMCID'] . "] "
+			: ""
+		)
+		// PubMed
+		. ( isset($paper_data['PMID']) ?
+			" [http://www.ncbi.nlm.nih.gov/pubmed/" . $paper_data['PMID'] .
+			( $type == 'PMID' ?
+			" <span class='Z3988' title='ctx_ver=Z39.88-2004&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Ajournal&amp;rfr_id=info%3Asid%2Focoins.info%3Agenerator&amp;rft.genre=article&amp;rft_id=info%3Apmid%2F" . $paper_data['PMID'] . "'>PMID:" . $paper_data['PMID'] . "</span>]"
+			: " PMID:" . $paper_data['PMID'] . "]"
+			)
+			: ""
+		);
+
+		// add the hcite container
+		$string = "<cite class='hcite'>$string</cite>";
+	}
+
+	if (isset($wgPCImpactStoryApiKey)){
+		# prepend the ImpactStory stuff
+		$string = "<div class='impactstory-embed' data-id='"
+		. ($type == 'PMID'
+			? $paper_data['PMID'] . "' data-id-type='pmid"
+			: $paper_data['DOI'] ."' data-id-type='doi"
+		)
+		."' data-show-logo='false' data-badge-type='icon' data-api-key='"
+		. $wgPCImpactStoryApiKey
+		. "'><i class='loading'></i></div>"
+		. $string;
+	}
+
+	return $string;
+}
+
+

@@ -97,3 +97,13 @@ You can then use Template:template-name to format the data, including or omittin
 For a demonstration of the functioning of this extension, please see the [GMOD wiki Publications page](http://gmod.org/wiki/Publications).
 
 Please address any questions to Amelia Ireland, amelia.ireland@gmod.org.
+
+
+To Do
+=====
+
+This is a work in progress; the following issues are on the to-do list:
+
+*standardise error responses
+*cache DOI search results
+*add ISBN lookup support

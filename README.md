@@ -104,6 +104,6 @@ To Do
 
 This is a work in progress; the following issues are on the to-do list:
 
-*standardise error responses
-*cache DOI search results
-*add ISBN lookup support
+- standardise error responses
+- add ISBN lookup support
+- cache all lookup results

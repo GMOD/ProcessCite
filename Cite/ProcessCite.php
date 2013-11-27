@@ -106,9 +106,9 @@ function wfProcessCite( $key, $str, $argv ){
 
 	# Configuration section
 
-	$libtag = 'LIB'; # the prefix for commonly used references to be pulled from a page in the wiki
-	$lib_pageName = "$wgSitename Reference Library"; # the PAGENAME of the page where the commonly used references are stored
-	require "GO.xrf_abbs.php"; # load the dbxref url file
+//	$libtag = 'LIB'; # the prefix for commonly used references to be pulled from a page in the wiki
+//	$lib_pageName = "$wgSitename Reference Library"; # the PAGENAME of the page where the commonly used references are stored
+//	require "GO.xrf_abbs.php"; # load the dbxref url file
 
 	# get the key;xrefs list
 //	if (isset($key) && !is_int($key)){
@@ -129,10 +129,11 @@ function wfProcessCite( $key, $str, $argv ){
 	$data = trim(str_replace('_',' ', array_pop($ref_fields)));	# assume the last element is the identifier data
 	$data = str_replace(' ','_',$data);
 	$ref_type = implode(':',$ref_fields); 	# reassemble the front part
-	MWDebug::log("ref fields: $ref_fields; ref type: $ref_type; data: $data");
+//	MWDebug::log("ref fields: $ref_fields; ref type: $ref_type; data: $data");
+	$lc_ref_type = strtolower($ref_type);
 
-	switch ($ref_type){
-		case 'DOI':
+	switch ($lc_ref_type){
+		case 'doi':
 			// Fetch the paper data from the CrossRef server
 			$paper_data = CrossRef::doiToMeta($data);
 
@@ -142,8 +143,8 @@ function wfProcessCite( $key, $str, $argv ){
 			//check for errors
 			if(isset($paper_data['error']))
 			{
-				$string = $ref_type . ":" . $data . ': <span class="error">' . wfMsg('doi_not_resolved') . "</span>";
-				MWDebug::log("error in resolving DOI $data!");
+				$string = "DOI:" . $data . ': <span class="error">' . wfMsg('doi_not_resolved') . "</span>";
+//				MWDebug::log("error in resolving DOI $data!");
 			} else {
 
 				// reformat date to match the PMID date
@@ -162,9 +163,8 @@ function wfProcessCite( $key, $str, $argv ){
 				$string = formatRefs($paper_data, 'DOI');
 			}
 			break;
-
-		case 'PMID':
-			MWDebug::log("found a PMID ref: $data");
+		case 'pmid':
+//			MWDebug::log("found a PMID ref: $data");
 
 			$paper = new PMIDeFetch($data);
 			$paper_data = $paper->citation();
@@ -180,13 +180,10 @@ function wfProcessCite( $key, $str, $argv ){
 			}
 			$string = formatRefs($paper_data, 'PMID');
 			break;
-		case 'ISBN':
-
-
-
+		case 'isbn':
 			break;
 
-		# look in a library of reference information on a specific pagename
+/*		# look in a library of reference information on a specific pagename
 		case "$libtag":
 
 			# load the data library
@@ -209,6 +206,7 @@ function wfProcessCite( $key, $str, $argv ){
 			@$string = $item[$data];
 
 			break;
+*/
 		default:
 			if (isset ($dbxref_url[$ref_type])){
 				$link .= " [".$dbxref_url[$ref_type]."$data $tmp_key] ";
